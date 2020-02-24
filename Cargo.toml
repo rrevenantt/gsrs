@@ -1,0 +1,17 @@
+[package]
+name = "gsrs"
+description = "Generic Self Referencing Struct"
+documentation = "https://docs.rs/gsrs"
+repository = "https://github.com/rrevenantt/gsrs"
+version = "0.1.0"
+authors = ["Konstantin Anisimov <rrevenantt@gmail.com>"]
+license = "MIT"
+edition = "2018"
+readme = "README.md"
+keywords = ["gsrs","self-referencing","self-referencial"]
+categories = ["data-structures"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dev-dependencies]
+typed-arena = "2.0.*"
