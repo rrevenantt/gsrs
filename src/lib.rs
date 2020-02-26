@@ -94,10 +94,12 @@ use std::intrinsics::transmute;
 /// ## Self Referencing Struct
 /// Allows owner and references to it to be saved in a same movable struct
 ///
-/// All interaction with `SRS` is done with `with` method.
+/// In general you create `SRS` with `create_with`, modify it with `with`, use it with `get_ref`
+/// and in the end it will be dropped automatically or you can use `split` to keep some parts if necessary
+///
 /// If you want to add additional owned values you will need arena-like structure like Arena from `typed_arena`
 ///
-/// If `Owner` type can be extended while there are references to existing data, like Arena from `typed_arena`,
+/// If `Owner` type can be extended while there are references to existing data, like Arena,
 /// you can use `default` otherwise `new` is the only way to create it
 ///
 /// It is recommended to annotate lifetime used for `DerefWithLifetime` impl as `'static` when creating `SRS`
@@ -194,9 +196,8 @@ where
             };
             v
         };
-        //
+
         Self { owner, user }
-        // unimplemented!()
     }
 
     /// Splits `SRS` into owned and borrowed parts.
@@ -234,7 +235,7 @@ where
     #[inline]
     pub fn with<'b, F, Z: 'static>(&'b mut self, f: F) -> Z
     where
-        F: Fn(&'b mut <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> Z + 'static,
+        F: FnOnce(&'b mut <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> Z + 'static,
         'a: 'b,
     {
         let arena = self.owner.as_ref();
@@ -250,7 +251,7 @@ where
     #[inline]
     pub fn get_ref<'b, F, Z: 'static>(&'b self, f: F) -> &'b Z
     where
-        F: Fn(&'b <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> &'b Z + 'static,
+        F: FnOnce(&'b <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> &'b Z + 'static,
         'a: 'b,
     {
         let arena = self.owner.as_ref();
@@ -331,9 +332,4 @@ macro_rules! deref_with_lifetime {
             // }
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    // all tests are integration ones
 }
