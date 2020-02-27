@@ -1,14 +1,12 @@
-#![feature(test)]
+// #![feature(test)]
 
 use gsrs::deref_with_lifetime;
 use gsrs::DerefWithLifetime;
 use gsrs::SRS;
 
 use typed_arena::Arena;
-use std::collections::{HashMap, HashSet};
-use std::sync::RwLock;
-use std::convert::identity;
-use std::hint::black_box;
+use std::cmp::Ordering;
+use std::cell::Cell;
 
 struct MyBigStruct {
     f1: usize,
@@ -30,7 +28,7 @@ fn test1(srs: SRS<Arena<MyBigStruct>, SRSUser>) -> usize {
 #[test]
 fn test_arena() {
     let mut srs = SRS::<Arena<MyBigStruct>, SRSUser<'static>>::default();
-    let a = srs.with(|data, arena| {
+    srs.with(|data, arena| {
         let a = arena.alloc(MyBigStruct { f1: 1, _f2: None });
         data.type1.push(&*a);
         // &*a
@@ -50,22 +48,32 @@ fn test_create_with_and_get_ref() {
     use gsrs::*;
     struct Test {
         field: usize,
+        field2: usize,
     }
     struct TestRef<'a>(&'a Test);
     deref_with_lifetime!(TestRef);
 
-    fn test(srs: &SRS<Test, TestRef<'static>>) -> usize {
-        srs.get_ref(|user, _| user.0).field
+    fn test(srs: &SRS<Test, TestRef>) -> usize {
+        srs.get_ref(|user, _| user.0).field2
     }
 
-    let mut srs =
-        SRS::<Test, TestRef<'static>>::create_with(Test { field: 2 }, |owner| TestRef(owner));
+    let mut srs = SRS::<Test, TestRef>::create_with(
+        Test {
+            field: 2,
+            field2: 2,
+        },
+        |owner| TestRef(owner),
+    );
     // let r = srs.get_ref(|user,_|user);
 
     let b = test(&srs);
-    let mut ow = Box::new(Test { field: 0 });
+    let mut ow = Box::new(Test {
+        field: 0,
+        field2: 0,
+    });
     let r = srs.split(&mut ow);
     assert_eq!(2, r.0.field);
+    assert_eq!(2, b);
 }
 
 #[test]
@@ -90,31 +98,69 @@ fn test_new_and_get_ref() {
 }
 
 #[test]
-fn test_vec() {
+fn test_string_suffix_array() {
     use gsrs::*;
-    struct Test {
-        field: String,
-    }
-    struct TestRef<'a>(HashSet<&'a str>);
+    struct TestRef<'a>(Vec<&'a str>);
     deref_with_lifetime!(TestRef);
-    let mut srs = SRS::<_, TestRef>::create_with(
-        Test {
-            field: "testtest".to_owned(),
-        },
-        |owner| {
+
+    let mut suffix_array =
+        SRS::<_, TestRef>::create_with("testtest こんにちは".to_owned(), |owner| {
             TestRef({
-                let mut a = owner.field.chars();
-                let mut set = HashSet::new();
+                let mut a = owner.chars();
+                let mut vec = Vec::new();
+                vec.push(a.as_str());
                 while let Some(_) = a.next() {
-                    set.insert(a.as_str());
+                    vec.push(a.as_str());
                 }
-                set
+                vec.sort();
+                vec
             })
-        },
-    );
-    //move it whereever you like
-    let mut srs = black_box(srs);
-    let a = srs.with(|user, _| user.0.contains("ttest"));
-    let b = srs.with(|user, _| user.0.contains("aaaaa"));
-    assert!(a && !b);
+        });
+    //move it wherever you like
+    fn contains(vec: &[&str], str: &str) -> bool {
+        vec.binary_search_by(|&it| {
+            if it.starts_with(str) {
+                Ordering::Equal
+            } else {
+                it.cmp(str)
+            }
+        }).is_ok()
+    }
+    let a = suffix_array.with(|user, _| contains(&user.0, "ttes"));
+    let c = suffix_array.with(|user, _| contains(&user.0, "こん"));
+    let str = "aa".to_owned();
+    let b = suffix_array.with(move |user, _| contains(&user.0, &*str));
+    assert!(a && c && !b);
+}
+
+#[test]
+fn test_cell() {
+    use gsrs::*;
+    struct TestRef<'a>(&'a Cell<u8>);
+    deref_with_lifetime!(TestRef);
+
+    fn helper(srs: SRS<Cell<u8>, TestRef<'static>>) -> u8 {
+        srs.set(10);
+        srs.get_ref(|user, _| user.0).set(20);
+        srs.get()
+    }
+
+    let mut srs = SRS::<_, TestRef<'static>>::create_with(Cell::new(25), |owner| TestRef(owner));
+    let res = helper(srs);
+    assert_eq!(res, 20);
+}
+
+#[test]
+fn test_cell_raw_ref() {
+    use gsrs::*;
+
+    fn helper(srs: SRS<Cell<u8>, &'static Cell<u8>>) -> u8 {
+        srs.set(10);
+        srs.get_ref(|user, _| *user).set(20);
+        srs.get()
+    }
+
+    let mut srs = SRS::<_, &'static Cell<u8>>::create_with(Cell::new(25), |owner| owner);
+    let res = helper(srs);
+    assert_eq!(res, 20);
 }
