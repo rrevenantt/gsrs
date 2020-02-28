@@ -4,44 +4,8 @@ use gsrs::deref_with_lifetime;
 use gsrs::DerefWithLifetime;
 use gsrs::SRS;
 
-use typed_arena::Arena;
 use std::cmp::Ordering;
 use std::cell::Cell;
-
-struct MyBigStruct {
-    f1: usize,
-    _f2: Option<usize>,
-}
-
-#[derive(Default)]
-struct SRSUser<'a> {
-    type1: Vec<&'a MyBigStruct>,
-    _type2: Vec<&'a MyBigStruct>,
-}
-
-deref_with_lifetime!(SRSUser);
-
-fn test1(srs: SRS<Arena<MyBigStruct>, SRSUser>) -> usize {
-    srs.get_ref(|user, _| user.type1[0]).f1
-}
-
-#[test]
-fn test_arena() {
-    let mut srs = SRS::<Arena<MyBigStruct>, SRSUser<'static>>::default();
-    srs.with(|data, arena| {
-        let a = arena.alloc(MyBigStruct { f1: 1, _f2: None });
-        data.type1.push(&*a);
-        // &*a
-    });
-
-    // let b = srs.get_ref(|user,_| user.type1[0]);
-    let b = test1(srs);
-
-    // println!("{}", b);
-    // drop(srs);
-
-    assert_eq!(b, 1);
-}
 
 #[test]
 fn test_create_with_and_get_ref() {
@@ -163,4 +127,43 @@ fn test_cell_raw_ref() {
     let mut srs = SRS::<_, &'static Cell<u8>>::create_with(Cell::new(25), |owner| owner);
     let res = helper(srs);
     assert_eq!(res, 20);
+}
+
+#[rustversion::since(1.36)]
+mod arena {
+    use typed_arena::Arena;
+    use gsrs::*;
+    struct MyBigStruct {
+        f1: usize,
+        _f2: Option<usize>,
+    }
+
+    #[derive(Default)]
+    struct SRSUser<'a> {
+        type1: Vec<&'a MyBigStruct>,
+        _type2: Vec<&'a MyBigStruct>,
+    }
+
+    deref_with_lifetime!(SRSUser);
+    fn test1(srs: SRS<Arena<MyBigStruct>, SRSUser>) -> usize {
+        srs.get_ref(|user, _| user.type1[0]).f1
+    }
+
+    #[test]
+    fn test_arena() {
+        let mut srs = SRS::<Arena<MyBigStruct>, SRSUser<'static>>::default();
+        srs.with(|data, arena| {
+            let a = arena.alloc(MyBigStruct { f1: 1, _f2: None });
+            data.type1.push(&*a);
+            // &*a
+        });
+
+        // let b = srs.get_ref(|user,_| user.type1[0]);
+        let b = test1(srs);
+
+        // println!("{}", b);
+        // drop(srs);
+
+        assert_eq!(b, 1);
+    }
 }

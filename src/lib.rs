@@ -7,12 +7,10 @@
 //! Self referencing structs are generally considered an anti-pattern in Rust, so if you can easily
 //! go without it you should do it. But sometimes you actually need to have a self referential struct.
 //! So here are some examples when you actually need `SRS`:
-//!  - If you have structure that is built on references (graph with Arena, or any structure built on top of the string)
-//! and you want to move it to another thread.
-//!  - You have a structs with `Vec` of big values and a `HashSet` to prevent adding duplicates to it.
-//! You also need to dynamically add values to it from time to time. Also those structs are holded in another collection.
-//! Technically you might be able to workaround with indicies, or untrivially reorganising your code, but it would
-//! require additional code and makes semantics less clear.
+//!  - If you have structure that is built on references
+//! (graph with Arena, or any structure built with slices on top of the string)
+//! and you want to be able move it to another thread, or put it into Vec.
+//!  - If your api would be much better if you will be able to return self contained values.
 //!
 //! Does not support dependent lifetimes (yet?, is it actully needed/possible?)
 //!

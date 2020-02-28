@@ -3,7 +3,7 @@ name = "gsrs"
 description = "Generic Self Referencing Struct"
 documentation = "https://docs.rs/gsrs"
 repository = "https://github.com/rrevenantt/gsrs"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Konstantin Anisimov <rrevenantt@gmail.com>"]
 license = "MIT"
 edition = "2018"
@@ -15,3 +15,4 @@ categories = ["data-structures"]
 
 [dev-dependencies]
 typed-arena = "2.0.*"
+rustversion = "1.0.*"
