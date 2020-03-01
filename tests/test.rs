@@ -6,6 +6,7 @@ use gsrs::SRS;
 
 use std::cmp::Ordering;
 use std::cell::Cell;
+use std::ops::Deref;
 
 #[test]
 fn test_create_with_and_get_ref() {
@@ -42,7 +43,6 @@ fn test_create_with_and_get_ref() {
 
 #[test]
 fn test_new_and_get_ref() {
-    use gsrs::*;
     struct Test {
         field: usize,
     }
@@ -63,7 +63,6 @@ fn test_new_and_get_ref() {
 
 #[test]
 fn test_string_suffix_array() {
-    use gsrs::*;
     struct TestRef<'a>(Vec<&'a str>);
     deref_with_lifetime!(TestRef);
 
@@ -99,14 +98,13 @@ fn test_string_suffix_array() {
 
 #[test]
 fn test_cell() {
-    use gsrs::*;
     struct TestRef<'a>(&'a Cell<u8>);
     deref_with_lifetime!(TestRef);
 
     fn helper(srs: SRS<Cell<u8>, TestRef<'static>>) -> u8 {
         srs.set(10);
         srs.get_ref(|user, _| user.0).set(20);
-        srs.get()
+        srs.deref().get()
     }
 
     let mut srs = SRS::<_, TestRef<'static>>::create_with(Cell::new(25), |owner| TestRef(owner));
@@ -116,18 +114,38 @@ fn test_cell() {
 
 #[test]
 fn test_cell_raw_ref() {
-    use gsrs::*;
-
     fn helper(srs: SRS<Cell<u8>, &'static Cell<u8>>) -> u8 {
         srs.set(10);
         srs.get_ref(|user, _| *user).set(20);
-        srs.get()
+        srs.deref().get()
     }
 
     let mut srs = SRS::<_, &'static Cell<u8>>::create_with(Cell::new(25), |owner| owner);
     let res = helper(srs);
     assert_eq!(res, 20);
 }
+
+// this should never be able to compile
+// todo check this with trybuild crate
+// #[test]
+// fn test_cell_user_ref() {
+//     #[derive(Default)]
+//     struct User<'a>(Cell<Option<&'a User<'a>>>);
+//     deref_with_lifetime!(User);
+//     // fn helper(srs: Box<SRS<(),User>>)  {
+//     //     srs.get(|user|println!("{:p}",user.0.get().unwrap() as *const _))
+//     // }
+//
+//     let mut srs = SRS::<(), User>::default();
+//     let mut srs2 = SRS::<(), User>::default();
+//     srs.get(|user|{
+//         user.0.set(Some(user))
+//     });
+//     let before = srs.get(|user|user.0.get().unwrap() as *const _ as usize);
+//     core::mem::swap(&mut srs,&mut srs2);
+//     let after = srs.get(|user|user.0.get().unwrap() as *const _ as usize);
+//     assert_eq!(before,after);
+// }
 
 #[rustversion::since(1.36)]
 mod arena {

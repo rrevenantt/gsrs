@@ -33,7 +33,9 @@
 //! println!("{}", r.field);
 //! ```
 //! or you can do creation in one go.
-//! Although you anyway have to specify type of the referencing part.
+//! Although you anyway have to specify type of the referencing part
+//! because type inference is getting confused by changed lifetime.
+//! This can be fixed, but only when GATs will be stabilized.
 //! ```
 //! use gsrs::*;
 //! struct Test{field:usize}
@@ -102,6 +104,8 @@ use std::mem;
 use std::intrinsics::transmute;
 use std::ptr::NonNull;
 use std::fmt::{Debug, Formatter};
+// use std::marker::PhantomPinned;
+// use std::pin::Pin;
 
 // pub unsafe trait Movable:Unpin{}
 // unsafe impl<T:Unpin> Movable for Box<T>{}
@@ -111,7 +115,7 @@ use std::fmt::{Debug, Formatter};
 /// Allows owner and references to it to be saved in a same movable struct
 ///
 /// In general you create `SRS` with `create_with`, modify it with `with`, use it with `get_ref`
-/// and in the end it will be dropped automatically or you can use `split` to keep some parts if necessary
+/// and in the end it will be dropped automatically or you can use `split` to keep some parts if necessary.f
 ///
 /// If you want to add additional owned values you will need arena-like structure like Arena from `typed_arena`
 ///
@@ -126,13 +130,14 @@ where
     U: for<'b> DerefWithLifetime<'b>,
 {
     // user have to be before owner for proper Drop call order
+    // user: AliasedBox<U>,
     user: U,
     // Box is required to prevent user to get reference to owner field, because it would be invalid after move
     // so it would be possible to move SRS safely
     // Technically i think it can also be done by providing some king of collection trait but
     // it is a todo right now
     // We need to AliasedBox instead usual Box because we violate noalias Box requirement
-    // With Box when SRS is moved into function compiler/llvm expects that there is no other pointers
+    // With Box when SRS is moved into function, compiler/llvm expects that there is no other pointers
     // pointing inside of it, so it can discard any action that is using reference from U
     owner: AliasedBox<Owner>,
 }
@@ -204,23 +209,19 @@ where
     /// let r = srs.split(&mut ow);
     /// println!("{}",r.0.field);
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn create_with<'b, F>(owner: Owner, f: F) -> Self
     where
-        // for<'b> Z: DerefWithLifetime<'b,Static=U>,
         F: 'static + FnOnce(&'b Owner) -> <U as DerefWithLifetime<'b>>::Target,
         Owner: 'b,
-        U: 'b, // for<'b> <U as DerefWithLifetime<'b>>
+        U: 'b,
     {
         let owner: AliasedBox<Owner> = Box::new(owner).into();
 
-        let user = {
-            let owner_ref = owner.deref();
-            let v = unsafe {
-                // transmute here also just changes lifetime
-                <U as DerefWithLifetime>::move_with_lifetime_back(f(transmute(owner_ref)))
-            };
-            v
+        let owner_ref = owner.deref();
+        let user = unsafe {
+            // transmute here also just changes lifetime
+            <U as DerefWithLifetime>::move_with_lifetime_back(f(transmute(owner_ref)))
         };
 
         Self { owner, user }
@@ -245,7 +246,7 @@ where
     /// let r = srs.split(&mut ow);
     /// println!("{}",r.0.unwrap().field);
     /// ```
-    #[inline(always)]
+    #[inline]
     pub fn split<'b>(mut self, new: &'b mut Box<Owner>) -> <U as DerefWithLifetime<'b>>::Target {
         let owner = unsafe { &mut *(&mut self.owner as *mut _ as *mut Box<Owner>) };
         mem::swap(new, owner);
@@ -258,11 +259,12 @@ where
     /// ### Safety
     /// `'static` lifetime on closure and on return value is required to prevent saving outer references in `user`
     /// and enforcing `'b` lifetime allows to use references to data inside this struct outside.
-    /// Moving struct is safe because you can't get reference to the fields.
-    #[inline(always)]
+    /// Moving struct is safe because you can't get reference to the underlying fields
+    /// (`Owner` is behind `Box` and `U` is behind incompatible lifetime when passed into closure).
+    #[inline]
     pub fn with<'b, F, Z: 'static>(&'b mut self, f: F) -> Z
     where
-        F: 'static + FnOnce(&'b mut <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> Z,
+        for<'x> F: 'static + FnOnce(&'x mut <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> Z,
         'a: 'b,
     {
         let owner = self.owner.deref();
@@ -271,14 +273,14 @@ where
     }
 
     /// ### Method for using 'SRS'
-    /// Allows you to get existing self reference
+    /// Allows you to get existing self reference to use it outside
     ///
     /// ### Safety
     /// Same as for `with`
-    #[inline(always)]
+    #[inline]
     pub fn get_ref<'b, F, Z: ?Sized + 'static>(&'b self, f: F) -> &'b Z
     where
-        F: 'static + FnOnce(&'b <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> &'b Z,
+        for<'x> F: 'static + FnOnce(&'x <U as DerefWithLifetime<'b>>::Target, &'b Owner) -> &'b Z,
         'a: 'b,
     {
         let owner = self.owner.deref();
@@ -286,9 +288,9 @@ where
         f(user, owner)
     }
 
-    // pub fn temp_ref<'b, F, Z: 'static>(&'b self, f: F) -> &'b Z
+    // pub fn get<'b, F, Z: 'static>(&'b self, f: F) -> Z
     //     where
-    //         F: 'static + FnOnce(&'b <U as DerefWithLifetime<'b>>::Target) -> &'b Z,
+    //         for <'x> F: 'static + FnOnce(&'x <U as DerefWithLifetime<'b>>::Target) -> Z,
     //         'a: 'b,
     // {
     //     let user = unsafe { self.user.deref_with_lifetime() };
@@ -308,8 +310,30 @@ where
     }
 }
 
+// technically default drop is safe for current rust version
+// but manually implementing drop is more future proof
+// in case rust will allow to run particular code only if lifetime is static
+// because in that case malicious drop impls will be able to save inner references in outer static variables
+// impl<'a, Owner: 'a, U> Drop for SRS<Owner, U>
+//     where
+//         U: for<'b> DerefWithLifetime<'b>,
+// {
+//     fn drop<'a>(&'a mut self) {
+//         unsafe {
+//             drop_in_place(<U as DerefWithLifetime<'a>>::deref_with_lifetime_mut(&mut self.user));
+//             drop_in_place(&mut self.owner)
+//         }
+//     }
+// }
+
 struct AliasedBox<U: ?Sized> {
     ptr: NonNull<U>,
+}
+
+impl<U: Default + ?Sized> Default for AliasedBox<U> {
+    fn default() -> Self {
+        Box::new(U::default()).into()
+    }
 }
 
 impl<U: Debug> Debug for AliasedBox<U> {
@@ -328,6 +352,16 @@ impl<U: ?Sized> Deref for AliasedBox<U> {
     }
 }
 
+// impl<U: ?Sized> AliasedBox<U>{
+//     fn into(self) -> Box<U> {
+//         unsafe {
+//             let ptr = self.ptr.as_ptr();
+//             mem::forget(self);
+//             Box::from_raw(ptr)
+//         }
+//     }
+// }
+
 impl<U: ?Sized> From<Box<U>> for AliasedBox<U> {
     #[inline]
     fn from(from: Box<U>) -> Self {
@@ -344,6 +378,35 @@ impl<U: ?Sized> Drop for AliasedBox<U> {
         unsafe { Box::from_raw(self.ptr.as_ptr()) };
     }
 }
+
+// /// This one is the most efficient but most restrictive.
+// ///
+// ///
+// #[derive(Debug)]
+// pub struct SRSThin<U1, U2>
+// where
+//     U1: for<'b> DerefWithLifetime<'b>,
+//     U2: for<'b> DerefWithLifetime<'b>,
+// {
+//     user1: U1,
+//     user2: U2,
+//     pinned: PhantomPinned,
+// }
+//
+// impl<U1, U2> SRSThin<U1, U2>
+// where
+//     U1: for<'b> DerefWithLifetime<'b>,
+//     U2: for<'b> DerefWithLifetime<'b>,
+// {
+//
+//     pub fn new(part1: U1, part2: U2) -> Self {
+//         Self{
+//             user1: part1,
+//             user2: part2,
+//             pinned: PhantomPinned
+//         }
+//     }
+// }
 
 /// This trait should be implemented for any struct that will contain references to data inside `SRS`
 /// and it should be implemented for any lifetime.
@@ -374,7 +437,7 @@ pub unsafe trait DerefWithLifetime<'a> {
     // unsafe fn move_as_static(self) -> Self::Static;
 }
 
-unsafe impl<'a, 'b, Z: 'static> DerefWithLifetime<'a> for &'b Z {
+unsafe impl<'a, Z: ?Sized + 'static> DerefWithLifetime<'a> for &'_ Z {
     type Target = &'a Z;
 
     unsafe fn deref_with_lifetime(&'a self) -> &'a Self::Target {
